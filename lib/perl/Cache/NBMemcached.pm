@@ -10,7 +10,6 @@ package Cache::NBMemcached;
 use strict;
 no strict 'refs';
 use Storable ();
-use Data::Storable ();
 use Socket qw( MSG_NOSIGNAL PF_INET IPPROTO_TCP SOCK_STREAM );
 use IO::Handle ();
 use Time::HiRes ();
@@ -786,7 +785,7 @@ sub _set {
       $key = ref $key ? $key->[1] : $key;
 
       if (ref $val) {
-          $val = Data::Storable::nfreeze($val);
+          $val = Storable::nfreeze($val);
           $flags |= F_STORABLE;
       }
 
@@ -1248,7 +1247,7 @@ sub _load_multi {
             # and dies if the version number changes at all.  in 5.8
             # they made it only die if it unencounters a new feature)
             eval {
-                $ret->{$k} = Data::Storable::thaw($ret->{$k});
+                $ret->{$k} = Storable::thaw($ret->{$k});
             };
             # so if there was a problem, try oldskool storable
             if($@) {
