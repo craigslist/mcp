@@ -15,7 +15,8 @@ use IO::Handle ();
 use Time::HiRes ();
 use String::CRC32;
 use Errno qw( EINPROGRESS EWOULDBLOCK EISCONN );
-use Epolld::Settings;
+
+use constant DEBUG => 0;
 
 use fields qw{
     debug no_rehash stats compress_threshold compress_enable stat_callback
@@ -85,7 +86,7 @@ sub new {
     my ($args) = @_;
 
     $self->set_servers($args->{'servers'});
-    $self->{'debug'} = Epolld::Settings::DEBUG || $args->{'debug'} || 0;
+    $self->{'debug'} = DEBUG || $args->{'debug'} || 0;
     $self->{'no_rehash'} = $args->{'no_rehash'};
     $self->{'stats'} = {};
     $self->{'pref_ip'} = $args->{'pref_ip'} || {};
@@ -132,7 +133,7 @@ sub get_cache_socket_info {
 
 sub clear_stuck_socks {
   my($self,$now) = @_;
-  print STDERR __PACKAGE__ . "::clear_stuck_socks\n" if Epolld::Settings::DEBUG;
+  print STDERR __PACKAGE__ . "::clear_stuck_socks\n" if DEBUG;
   foreach my $ssock (keys %{$self->{'stuck_socks'}}) {
     next unless(($self->{'stuck_socks'}->{$ssock} + 
                  $self->{'stuck_sock_timeout'}) < $now);
@@ -225,7 +226,7 @@ sub set_stat_callback {
 
 sub _dead_sock {
     my ($sock, $ret, $dead_for) = @_;
-    print STDERR __PACKAGE__ . "::_dead_sock $sock\n" if Epolld::Settings::DEBUG;
+    print STDERR __PACKAGE__ . "::_dead_sock $sock\n" if DEBUG;
     if ($sock =~ /^Sock_(.+?):(\d+)$/) {
         my $now = time();
         my ($ip, $port) = ($1, $2);
@@ -240,7 +241,7 @@ sub _dead_sock {
 
 sub _close_sock {
     my ($sock) = @_;
-    print STDERR __PACKAGE__ . "::_close_sock $sock\n" if Epolld::Settings::DEBUG;
+    print STDERR __PACKAGE__ . "::_close_sock $sock\n" if DEBUG;
     if ($sock =~ /^Sock_(.+?):(\d+)$/) {
         my ($ip, $port) = ($1, $2);
         my $host = "$ip:$port";
@@ -253,7 +254,7 @@ sub _connect_sock { # sock, sin, timeout
     my ($sock, $sin, $timeout) = @_;
     $timeout ||= 0.25;
 
-    print STDERR __PACKAGE__ . "::_connect_sock $sock $timeout\n" if Epolld::Settings::DEBUG;
+    print STDERR __PACKAGE__ . "::_connect_sock $sock $timeout\n" if DEBUG;
 
     # make the socket non-blocking from now on,
     # except if someone wants 0 timeout, meaning
@@ -287,7 +288,7 @@ sub _connect_sock { # sock, sin, timeout
     # from here on, we use non-blocking (async) IO for the duration
     # of the socket's life
 
-    print STDERR __PACKAGE__ . "::_connect_sock $sock $timeout ret " . ($ret // 'undef') . "\n" if Epolld::Settings::DEBUG;
+    print STDERR __PACKAGE__ . "::_connect_sock $sock $timeout ret " . ($ret // 'undef') . "\n" if DEBUG;
 
     return $ret;
 }
@@ -296,16 +297,16 @@ sub sock_to_host { # (host)
     my Cache::NBMemcached $self = ref $_[0] ? shift : undef;
     my $host = $_[0];
 
-    print STDERR __PACKAGE__ . "::sock_to_host $host\n" if Epolld::Settings::DEBUG;
+    print STDERR __PACKAGE__ . "::sock_to_host $host\n" if DEBUG;
     if ($cache_sock{$host}) {
-	    print STDERR __PACKAGE__ . "::sock_to_host $host cached\n" if Epolld::Settings::DEBUG;
+	    print STDERR __PACKAGE__ . "::sock_to_host $host cached\n" if DEBUG;
 	    return $cache_sock{$host};
     }
 
     my $now = time();
     my ($ip, $port) = $host =~ /(.*):(\d+)/;
     if ($host_dead{$host} && $host_dead{$host} > $now) {
-	    print STDERR __PACKAGE__ . "::sock_to_host $host dead\n" if Epolld::Settings::DEBUG;
+	    print STDERR __PACKAGE__ . "::sock_to_host $host dead\n" if DEBUG;
 	    return undef;
     }
     my $sock = "Sock_$host";
@@ -331,7 +332,7 @@ sub sock_to_host { # (host)
         socket($sock, PF_INET, SOCK_STREAM, $proto);
         $sin = Socket::sockaddr_in($port,Socket::inet_aton($ip));
         unless (_connect_sock($sock,$sin)) {
-	        print STDERR __PACKAGE__ . "::sock_to_host $host connect fail\n" if Epolld::Settings::DEBUG;
+	        print STDERR __PACKAGE__ . "::sock_to_host $host connect fail\n" if DEBUG;
             return _dead_sock($sock, undef, 20 + int(rand(10)));
         }
     }
@@ -368,7 +369,7 @@ sub sock_to_host { # (host)
 
     $self->_start_next_request($sock);
 
-    print STDERR __PACKAGE__ . "::sock_to_host $host $sock\n" if Epolld::Settings::DEBUG;
+    print STDERR __PACKAGE__ . "::sock_to_host $host $sock\n" if DEBUG;
 
     return $sock;
 }
@@ -376,13 +377,13 @@ sub sock_to_host { # (host)
 sub get_sock { # (key)
     my Cache::NBMemcached $self = shift;
     my ($key) = @_;
-    print STDERR __PACKAGE__ . "::get_sock key $key\n" if Epolld::Settings::DEBUG;
+    print STDERR __PACKAGE__ . "::get_sock key $key\n" if DEBUG;
     if ($self->{'_single_sock'}) {
-	    print STDERR __PACKAGE__ . "::get_sock key $key single\n" if Epolld::Settings::DEBUG;
+	    print STDERR __PACKAGE__ . "::get_sock key $key single\n" if DEBUG;
 	    return $self->sock_to_host($self->{'_single_sock'})
     }
     unless ($self->{'active'}) {
-	    print STDERR __PACKAGE__ . "::get_sock key $key inactive\n" if Epolld::Settings::DEBUG;
+	    print STDERR __PACKAGE__ . "::get_sock key $key inactive\n" if DEBUG;
 	    return undef;
     }
     my $hv = ref $key ? int($key->[0]) : _hashfunc($key);
@@ -392,20 +393,20 @@ sub get_sock { # (key)
     my $real_key = ref $key ? $key->[1] : $key;
     my $tries = 0;
     while ($tries++ < 20) {
-	    print STDERR __PACKAGE__ . "::get_sock key $key try $tries\n" if Epolld::Settings::DEBUG;
+	    print STDERR __PACKAGE__ . "::get_sock key $key try $tries\n" if DEBUG;
         my $host = $self->{'buckets'}->[$hv % $self->{'bucketcount'}];
         my $sock = $self->sock_to_host($host);
 	    if ($sock) {
-		    print STDERR __PACKAGE__ . "::get_sock key $key sock $sock\n" if Epolld::Settings::DEBUG;
+		    print STDERR __PACKAGE__ . "::get_sock key $key sock $sock\n" if DEBUG;
 		    return $sock;
 	    }
 	    if ($sock->{'no_rehash'}) {
-		    print STDERR __PACKAGE__ . "::get_sock key $key no rehash\n" if Epolld::Settings::DEBUG;
+		    print STDERR __PACKAGE__ . "::get_sock key $key no rehash\n" if DEBUG;
 		    return undef;
 	    }
         $hv += _hashfunc($tries . $real_key);  # stupid, but works
     }
-    print STDERR __PACKAGE__ . "::get_sock key $key max retries\n" if Epolld::Settings::DEBUG;
+    print STDERR __PACKAGE__ . "::get_sock key $key max retries\n" if DEBUG;
     return undef;
 }
 
@@ -441,7 +442,7 @@ sub _oneline {
     # state: 0 - writing, 1 - reading, 2 - done
     my $state = defined $line ? 0 : 1;
 
-    if (Epolld::Settings::DEBUG) {
+    if (DEBUG) {
 	my $l = (ref $line ? $$line : $line);
 	$l //= 'undef';
 	$l =~ s/\r/\\r/g;
@@ -460,7 +461,7 @@ sub _oneline {
       # based on read or write state, update socket watch hashes
       if($state == 0) {
 	print STDERR __PACKAGE__ . "::_oneline sock=" . ($sock // 'undef')
-	    . " watch write\n" if Epolld::Settings::DEBUG;
+	    . " watch write\n" if DEBUG;
         delete $self->{'read_socks'}->{$sock};
         $self->{'write_socks'}->{$sock} = $sock;
         $self->{'connection_module'}->sock_watch(
@@ -469,7 +470,7 @@ sub _oneline {
       }
       elsif($state == 1) {
 	print STDERR __PACKAGE__ . "::_oneline sock=" . ($sock // 'undef')
-	    . " watch read\n" if Epolld::Settings::DEBUG;
+	    . " watch read\n" if DEBUG;
         delete $self->{'write_socks'}->{$sock};
         $self->{'read_socks'}->{$sock} = $sock;
         $self->{'connection_module'}->sock_watch(
@@ -482,7 +483,7 @@ sub _oneline {
       $self->{'oneline_line'}->{$sock}  = $line;
       $self->{'oneline_ret'}->{$sock}   = $ret;
 
-      print STDERR __PACKAGE__ . "::_oneline first time setup, return undef\n" if Epolld::Settings::DEBUG;
+      print STDERR __PACKAGE__ . "::_oneline first time setup, return undef\n" if DEBUG;
       return undef;
     }
  
@@ -493,13 +494,13 @@ sub _oneline {
       # writing state
       if($state == 0) {
         $res = send($sock, ${$self->{'oneline_line'}->{$sock}}, $FLAG_NOSIGNAL);
-	print STDERR __PACKAGE__ . "::_oneline nb write res=" . ($res // 'undef') . "\n" if Epolld::Settings::DEBUG;
+	print STDERR __PACKAGE__ . "::_oneline nb write res=" . ($res // 'undef') . "\n" if DEBUG;
 	if (not defined $res and $!==EWOULDBLOCK) {
 	    print STDERR __PACKAGE__ . "::_oneline WOULDBLOCK, return undef\n";
 	    return undef 
 	}
         unless ($res > 0) {
-	    print STDERR __PACKAGE__ . "::_oneline closing after write, return undef\n" if Epolld::Settings::DEBUG;
+	    print STDERR __PACKAGE__ . "::_oneline closing after write, return undef\n" if DEBUG;
             $self->{'oneline_state'}->{$sock} = 0;
             $self->{'oneline_line'}->{$sock} = undef;
             delete $self->{'read_socks'}->{$sock};
@@ -511,7 +512,7 @@ sub _oneline {
             return undef;
         }
         if ($res == int(length(${$self->{'oneline_line'}->{$sock}}))) { # all sent
-	    print STDERR __PACKAGE__ . "::_oneline nb write complete, watch read\n" if Epolld::Settings::DEBUG;
+	    print STDERR __PACKAGE__ . "::_oneline nb write complete, watch read\n" if DEBUG;
             $state = $self->{'oneline_state'}->{$sock} = 1;
             $self->{'oneline_line'}->{$sock} = undef;
             delete $self->{'write_socks'}->{$sock};
@@ -520,7 +521,7 @@ sub _oneline {
               $self->{'socks_for_crazy'}->{$sock},1,0)
               if($self->{'connection_module'});
         } else { # we only succeeded in sending some of it
-	    print STDERR __PACKAGE__ . "::_oneline nb write partial\n" if Epolld::Settings::DEBUG;
+	    print STDERR __PACKAGE__ . "::_oneline nb write partial\n" if DEBUG;
             substr(${$self->{'oneline_line'}->{$sock}}, 0, $res, ''); 
         }
       }
@@ -528,13 +529,13 @@ sub _oneline {
       # reading state
       elsif($state == 1) {
         $res = sysread($sock, $self->{'oneline_ret'}->{$sock}, 255, $offset);
-	print STDERR __PACKAGE__ . "::_oneline nb read res=" . ($res // 'undef') . "\n" if Epolld::Settings::DEBUG;
+	print STDERR __PACKAGE__ . "::_oneline nb read res=" . ($res // 'undef') . "\n" if DEBUG;
 	if (!defined($res) and $!==EWOULDBLOCK) {
 	    print STDERR __PACKAGE__ . "::_oneline WOULDBLOCK, return undef\n";
 	    return undef;
 	}
         if ($res == 0) { # catches 0=conn closed or undef=error
-	    print STDERR __PACKAGE__ . "::_oneline nb read close on res=0, return undef\n" if Epolld::Settings::DEBUG;
+	    print STDERR __PACKAGE__ . "::_oneline nb read close on res=0, return undef\n" if DEBUG;
             $self->{'oneline_state'}->{$sock} = 0;
             delete $self->{'read_socks'}->{$sock};
             delete $self->{'write_socks'}->{$sock};
@@ -547,7 +548,7 @@ sub _oneline {
         $offset += $res;
         if(rindex($self->{'oneline_ret'}->{$sock},"\r\n") + 2 == 
            int(length($self->{'oneline_ret'}->{$sock}))) {
-	    print STDERR __PACKAGE__ . "::_oneline nb read complete, unwatch\n" if Epolld::Settings::DEBUG;
+	    print STDERR __PACKAGE__ . "::_oneline nb read complete, unwatch\n" if DEBUG;
             $state = $self->{'oneline_state'}->{$sock} = 2;
             delete $self->{'read_socks'}->{$sock};
             delete $self->{'write_socks'}->{$sock};
@@ -559,7 +560,7 @@ sub _oneline {
  
       # finished state, return response
       if($state == 2) {
-	  if (Epolld::Settings::DEBUG) {
+	  if (DEBUG) {
 	      my $r = ($self->{'oneline_ret'}->{$sock} // 'undef');
 	      $r =~ s/\r/\\r/g;
 	      $r =~ s/\n/\\n/g;
@@ -569,7 +570,7 @@ sub _oneline {
         return $self->{'oneline_ret'}->{$sock};
       }
 
-      print STDERR __PACKAGE__ . "::_oneline fallthrough, return undef\n" if Epolld::Settings::DEBUG;
+      print STDERR __PACKAGE__ . "::_oneline fallthrough, return undef\n" if DEBUG;
       return undef;
     }
 
@@ -595,31 +596,31 @@ sub _oneline {
 
         if (vec($wout, fileno($sock), 1)) {
             $res = send($sock, $line, $FLAG_NOSIGNAL);
-	    print STDERR __PACKAGE__ . "::_oneline b write res=" . ($res // 'undef') . "\n" if Epolld::Settings::DEBUG;
+	    print STDERR __PACKAGE__ . "::_oneline b write res=" . ($res // 'undef') . "\n" if DEBUG;
             next
                 if not defined $res and $!==EWOULDBLOCK;
             unless ($res > 0) {
-		print STDERR __PACKAGE__ . "::_oneline b write failed\n" if Epolld::Settings::DEBUG;
+		print STDERR __PACKAGE__ . "::_oneline b write failed\n" if DEBUG;
                 $self->{'oneline_state'}->{$sock} = 0;
                 _close_sock($sock);
                 return undef;
             }
             if ($res == int(length($line))) { # all sent
-		print STDERR __PACKAGE__ . "::_oneline b write complete\n" if Epolld::Settings::DEBUG;
+		print STDERR __PACKAGE__ . "::_oneline b write complete\n" if DEBUG;
                 $state = 1;
             } else { # we only succeeded in sending some of it
-		print STDERR __PACKAGE__ . "::_oneline b write partial\n" if Epolld::Settings::DEBUG;
+		print STDERR __PACKAGE__ . "::_oneline b write partial\n" if DEBUG;
                 substr($line, 0, $res, ''); # delete the part we sent
             }
         }
 
         if (vec($rout, fileno($sock), 1)) {
             $res = sysread($sock, $ret, 255, $offset);
-	    print STDERR __PACKAGE__ . "::_oneline b read res=" . ($res // 'undef') . "\n" if Epolld::Settings::DEBUG;
+	    print STDERR __PACKAGE__ . "::_oneline b read res=" . ($res // 'undef') . "\n" if DEBUG;
             next
                 if !defined($res) and $!==EWOULDBLOCK;
             if ($res == 0) { # catches 0=conn closed or undef=error
-		print STDERR __PACKAGE__ . "::_oneline b read close\n" if Epolld::Settings::DEBUG;
+		print STDERR __PACKAGE__ . "::_oneline b read close\n" if DEBUG;
                 $self->{'oneline_state'}->{$sock} = 0;
                 _close_sock($sock);
                 return undef;
@@ -632,7 +633,7 @@ sub _oneline {
     }
 
     unless ($state == 2) {
-	print STDERR __PACKAGE__ . "::_oneline b read state=2\n" if Epolld::Settings::DEBUG;
+	print STDERR __PACKAGE__ . "::_oneline b read state=2\n" if DEBUG;
         $self->{'oneline_state'}->{$sock} = 0;
         delete $self->{'read_socks'}->{$sock};
         delete $self->{'write_socks'}->{$sock};
@@ -666,7 +667,7 @@ sub delete {
     # check sockmode, put request in queue and return if sock busy
     if($self->{'nb'} && $self->{'sockmode'}->{$sock}) {
       unless(($self->{'sockmode'}->{$sock} eq 'delete') && $nbsock) {
-	  print STDERR __PACKAGE__ . "::delete $sock sockmode " . $self->{'sockmode'}->{$sock} . " cmdname delete\n" if Epolld::Settings::DEBUG;
+	  print STDERR __PACKAGE__ . "::delete $sock sockmode " . $self->{'sockmode'}->{$sock} . " cmdname delete\n" if DEBUG;
         $self->{'sockrq_write'}->{$sock} ||= [];
         push(@{$self->{'sockrq_write'}->{$sock}}, sub {
           $self->delete($key,$time);
@@ -675,7 +676,7 @@ sub delete {
       }
     }
     $self->{'sockmode'}->{$sock} = 'delete';
-    print STDERR __PACKAGE__ . "::delete $sock set sockmode delete\n" if Epolld::Settings::DEBUG;
+    print STDERR __PACKAGE__ . "::delete $sock set sockmode delete\n" if DEBUG;
 
     my $res;
     # nonblocking subsequent iterations
@@ -747,7 +748,7 @@ sub _set {
     # check sockmode, put request in queue and return if sock busy
     if($self->{'nb'} && $self->{'sockmode'}->{$sock}) {
       unless(($self->{'sockmode'}->{$sock} eq $cmdname) && $nbsock) {
-	  print STDERR __PACKAGE__ . "::_set $sock sockmode " . $self->{'sockmode'}->{$sock} . " cmdname $cmdname\n" if Epolld::Settings::DEBUG;
+	  print STDERR __PACKAGE__ . "::_set $sock sockmode " . $self->{'sockmode'}->{$sock} . " cmdname $cmdname\n" if DEBUG;
         $self->{'sockrq_write'}->{$sock} ||= [];
         push(@{$self->{'sockrq_write'}->{$sock}}, sub {
           #$self->_set($cmdname,$key,$val,$exptime);
@@ -757,7 +758,7 @@ sub _set {
       }
     }
     $self->{'sockmode'}->{$sock} = $cmdname;
-    print STDERR __PACKAGE__ . "::_set $sock set sockmode $cmdname\n" if Epolld::Settings::DEBUG;
+    print STDERR __PACKAGE__ . "::_set $sock set sockmode $cmdname\n" if DEBUG;
 
     my $line;
     my $res;
@@ -804,7 +805,7 @@ sub _set {
               $val = $c_val;
               $len = $c_len;
               $flags |= F_COMPRESS;
-	      print STDERR __PACKAGE__ . "::_set $sock set sockmode $cmdname -- using compressed version\n" if Epolld::Settings::DEBUG;
+	      print STDERR __PACKAGE__ . "::_set $sock set sockmode $cmdname -- using compressed version\n" if DEBUG;
           }
       }
 
@@ -820,7 +821,7 @@ sub _set {
     # if we're not nonblocking or we are but have a result, finalize things
     if(!$self->{'nb'} || $res) {
 
-      if ($self->{'debug'} || Epolld::Settings::DEBUG) {
+      if ($self->{'debug'} || DEBUG) {
         print STDERR __PACKAGE__ . "::_set $cmdname $self->{namespace}$key = " . ($val // 'undef') . "\n";
       }
 
@@ -876,7 +877,7 @@ sub _incrdecr {
     # check sockmode, put request in queue and return if sock busy
     if($self->{'nb'} && $self->{'sockmode'}->{$sock}) {
       unless(($self->{'sockmode'}->{$sock} eq $cmdname) && $nbsock) {
-	  print STDERR __PACKAGE__ . "::_incrdecr $sock sockmode " . $self->{'sockmode'}->{$sock} . " cmdname $cmdname\n" if Epolld::Settings::DEBUG;
+	  print STDERR __PACKAGE__ . "::_incrdecr $sock sockmode " . $self->{'sockmode'}->{$sock} . " cmdname $cmdname\n" if DEBUG;
         $self->{'sockrq_write'}->{$sock} ||= [];
         push(@{$self->{'sockrq_write'}->{$sock}}, sub {
           #$self->_incrdecr($cmdname,$key,$value);
@@ -886,7 +887,7 @@ sub _incrdecr {
       }
     }
     $self->{'sockmode'}->{$sock} = $cmdname;
-    print STDERR __PACKAGE__ . "::_incrdecr $sock set sockmode $cmdname\n" if Epolld::Settings::DEBUG;
+    print STDERR __PACKAGE__ . "::_incrdecr $sock set sockmode $cmdname\n" if DEBUG;
 
     my $res;
     my $line;
@@ -989,7 +990,7 @@ sub close_and_forget_sock {
       . " perlsock=" . ($perlsock // 'undef')
       . " fileno=" . $fileno
       . " sock=" . ($sock // 'undef')
-      . "\n" if Epolld::Settings::DEBUG;
+      . "\n" if DEBUG;
 
   delete $self->{'read_socks'}->{$sock};
   delete $self->{'write_socks'}->{$sock};
@@ -1035,10 +1036,10 @@ sub get_multi {
     my $nbsock = $self->{'nbsock'};
     $self->{'nbsock'} = undef;
 
-    print STDERR __PACKAGE__ . "::get_multi nbsock=" . ($nbsock // 'undef') . "\n" if Epolld::Settings::DEBUG;
+    print STDERR __PACKAGE__ . "::get_multi nbsock=" . ($nbsock // 'undef') . "\n" if DEBUG;
 
     unless ($self->{'active'}) {
-	    print STDERR __PACKAGE__ . "::get_multi inactive\n" if Epolld::Settings::DEBUG;
+	    print STDERR __PACKAGE__ . "::get_multi inactive\n" if DEBUG;
 	    # FIXME: what does this really mean?
 	    return undef;
     }
@@ -1049,7 +1050,7 @@ sub get_multi {
 
     # nonblocking mode subsequent iterations
     if($nbsock) {
-	    print STDERR __PACKAGE__ . "::get_multi nbsock load responses\n" if Epolld::Settings::DEBUG;
+	    print STDERR __PACKAGE__ . "::get_multi nbsock load responses\n" if DEBUG;
 	    my @r = _load_multi($self, \%sock_keys, undef, $nbsock);
 	    push(@responses, @r) if(scalar @r && defined $r[0]);
     }
@@ -1061,7 +1062,7 @@ sub get_multi {
       foreach my $key (@_) {
         $sock = $self->get_sock($key);
         unless ($sock) {
-	        print STDERR __PACKAGE__ . "::get_multi key $key sock failboat\n" if Epolld::Settings::DEBUG;
+	        print STDERR __PACKAGE__ . "::get_multi key $key sock failboat\n" if DEBUG;
 	        # failing to contact a cache server results is a MISS so that
 	        # the calling code will go on to contact the origin servers
 	        push(@responses, { 'type' => 'MISS', 'key' => $key });
@@ -1070,7 +1071,7 @@ sub get_multi {
 
         if($self->{'nb'} && $self->{'sockmode'}->{$sock}) {
 	        # in nonblocking mode, remember keys for busy sockets
-	        print STDERR __PACKAGE__ . "::get_multi key $key sock $sock adding to queue_sock_keys because sockmode " . $self->{'sockmode'}->{$sock} . "\n" if Epolld::Settings::DEBUG;
+	        print STDERR __PACKAGE__ . "::get_multi key $key sock $sock adding to queue_sock_keys because sockmode " . $self->{'sockmode'}->{$sock} . "\n" if DEBUG;
 	        push(@{$queue_sock_keys{$sock}}, $key);
 	        # ok to skip the rest of the processing here, because the
 	        # presence of a value for sockmode means that the socket
@@ -1080,14 +1081,14 @@ sub get_multi {
         }
 
         $self->{'sockmode'}->{$sock} = 'get_multi';
-	print STDERR __PACKAGE__ . "::get_multi $sock set sockmode get_multi\n" if Epolld::Settings::DEBUG;
+	print STDERR __PACKAGE__ . "::get_multi $sock set sockmode get_multi\n" if DEBUG;
         my $kval = ref $key ? $key->[1] : $key;
         push @{$sock_keys{$sock}}, $kval;
       }
 
       # queue new get_multi requests for busy sockets
       foreach my $qsock (keys %queue_sock_keys) {
-        print STDERR __PACKAGE__ . "::get_multi requeue " . join(' ', @{$queue_sock_keys{$qsock}}) . "\n" if Epolld::Settings::DEBUG;
+        print STDERR __PACKAGE__ . "::get_multi requeue " . join(' ', @{$queue_sock_keys{$qsock}}) . "\n" if DEBUG;
         my $now = Time::HiRes::gettimeofday();
         $self->{'sockrq_read'}->{$qsock} ||= [];
         push(@{$self->{'sockrq_read'}->{$qsock}}, sub {
@@ -1110,12 +1111,12 @@ sub get_multi {
 	    # FIXME: when is 'nb' set when 'nbsock' is not?  This is
 	    # confusing.  Seems like this logic can be combined with the
 	    # if($nbsock) block above...
-	    print STDERR __PACKAGE__ . "::get_multi return (num responses " . scalar(@responses) . ")\n" if Epolld::Settings::DEBUG;
-	    #use Data::Dumper; print STDERR Dumper(\@responses) if Epolld::Settings::DEBUG;
+	    print STDERR __PACKAGE__ . "::get_multi return (num responses " . scalar(@responses) . ")\n" if DEBUG;
+	    #use Data::Dumper; print STDERR Dumper(\@responses) if DEBUG;
       return @responses;
     }
     else {
-      if ($self->{'debug'} || Epolld::Settings::DEBUG) {
+      if ($self->{'debug'} || DEBUG) {
           while (my ($k, $v) = each %val) {
               print STDERR "MemCache: got $k = $v\n";
           }
@@ -1129,7 +1130,7 @@ sub _load_multi {
     my Cache::NBMemcached $self = shift;
     my ($sock_keys, $ret, $nb_sock) = @_;
 
-    if (Epolld::Settings::DEBUG) {
+    if (DEBUG) {
 	my @sk = keys(%$sock_keys);
 	my @rk = keys(%$ret);
 	print STDERR __PACKAGE__ . "::_load_multi"
@@ -1167,7 +1168,7 @@ sub _load_multi {
 
     # clear these values for each socket unless nb_sock passed
     unless($nb_sock) {
-	print STDERR __PACKAGE__ . "::_load_multi clear state because nb_sock not passed in\n" if Epolld::Settings::DEBUG;
+	print STDERR __PACKAGE__ . "::_load_multi clear state because nb_sock not passed in\n" if DEBUG;
       foreach my $s (keys %$sock_keys) {
         delete $self->{'load_multi_reading'}->{$s}; 
         delete $self->{'load_multi_writing'}->{$s}; 
@@ -1179,7 +1180,7 @@ sub _load_multi {
         delete $self->{'load_multi_flags'}->{$s};
         delete $self->{'load_multi_ret'}->{$s};
 
-        print STDERR __PACKAGE__ . "::_load_multi watch write\n" if ($self->{'debug'} >= 2 || Epolld::Settings::DEBUG);
+        print STDERR __PACKAGE__ . "::_load_multi watch write\n" if ($self->{'debug'} >= 2 || DEBUG);
         $writing->{$s} = 1;
         $self->{'write_socks'}->{$s} = $s;
         $self->{'connection_module'}->sock_watch(
@@ -1192,14 +1193,14 @@ sub _load_multi {
 
     # in nonblocking mode, the first time through, this is enough
     if($self->{'nb'} && !$nb_sock) {
-	print STDERR __PACKAGE__ . "::_load_multi nb mod, returning without loading anything\n" if Epolld::Settings::DEBUG;
+	print STDERR __PACKAGE__ . "::_load_multi nb mod, returning without loading anything\n" if DEBUG;
 	return;
     }
 
     $dead = $self->{'load_multi_sub_dead'} = sub {
         my $sock = shift;
         print STDERR __PACKAGE__ . "::_load_multi dead key=" . ($key->{$sock} // $key // 'undef') . " ($sock)\n";
-        print STDERR __PACKAGE__ . "::_load_multi killing socket $sock\n" if ($self->{'debug'} >= 2 || Epolld::Settings::DEBUG);
+        print STDERR __PACKAGE__ . "::_load_multi killing socket $sock\n" if ($self->{'debug'} >= 2 || DEBUG);
         delete $reading->{$sock};
         delete $writing->{$sock};
         delete $self->{'read_socks'}->{$sock};
@@ -1339,7 +1340,7 @@ sub _load_multi {
                 delete $reading->{$sock};
                 delete $self->{'read_socks'}->{$sock};
                 delete $self->{'write_socks'}->{$sock};
-		print STDERR __PACKAGE__ . "::_load_multi found END, unwatch\n" if Epolld::Settings::DEBUG;
+		print STDERR __PACKAGE__ . "::_load_multi found END, unwatch\n" if DEBUG;
                 $self->{'connection_module'}->sock_watch(
                   $self->{'socks_for_crazy'}->{$sock},0,0)
                   if($self->{'connection_module'});
@@ -1430,7 +1431,7 @@ sub _load_multi {
             $reading->{$sock} = 1;
             delete $self->{'write_socks'}->{$sock};
             $self->{'read_socks'}->{$sock} = $sock;
-	    print STDERR __PACKAGE__ . "::_load_multi finished write, watch read\n" if Epolld::Settings::DEBUG;
+	    print STDERR __PACKAGE__ . "::_load_multi finished write, watch read\n" if DEBUG;
             $self->{'connection_module'}->sock_watch(
               $self->{'socks_for_crazy'}->{$sock},1,0)
               if($self->{'connection_module'});
@@ -1446,7 +1447,7 @@ sub _load_multi {
 
     if($self->{'nb'}) {             # non-blocking mode
 
-	print STDERR __PACKAGE__ . "::_load_multi nb checking sockets\n" if Epolld::Settings::DEBUG;
+	print STDERR __PACKAGE__ . "::_load_multi nb checking sockets\n" if DEBUG;
 
       my @responses;
 
@@ -1467,7 +1468,7 @@ sub _load_multi {
         if($writing->{$nb_sock});
       delete $self->{'write_socks'}->{$nb_sock}
         unless($writing->{$nb_sock});
-	print STDERR __PACKAGE__ . "::_load_multi calling sock_watch\n" if Epolld::Settings::DEBUG;
+	print STDERR __PACKAGE__ . "::_load_multi calling sock_watch\n" if DEBUG;
       $self->{'connection_module'}->sock_watch(
         $self->{'socks_for_crazy'}->{$nb_sock},
         $reading->{$nb_sock}, $writing->{$nb_sock})
@@ -1479,7 +1480,7 @@ sub _load_multi {
 
     else {                          # blocking mode
 
-	print STDERR __PACKAGE__ . "::_load_multi blocking select loop\n" if Epolld::Settings::DEBUG;
+	print STDERR __PACKAGE__ . "::_load_multi blocking select loop\n" if DEBUG;
 
       # the bitsets for select
       my ($rin, $rout, $win, $wout);
