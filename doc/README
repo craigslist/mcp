@@ -5,6 +5,7 @@ MCP Quick Start Guide.
    1.2. Perl modules
       1.2.1. IO::Epoll
       1.2.2. Tie::Syslog
+      1.2.3. String::CRC32
 
 2. Install MCP.
    2.1. Install contents of lib/ directory into your perl library path.
