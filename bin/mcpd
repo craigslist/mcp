@@ -1,0 +1,379 @@
+#!/usr/bin/perl
+# Copyright 2013 craigslist
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+use MCP;
+use Getopt::Std;
+use POSIX ":sys_wait_h";
+use strict;
+
+# parse commandline options
+my $opts = {};
+getopts('df:l:np:', $opts);
+my $daemonize       = $opts->{'d'}? 1: 0;
+my $config_filename = $opts->{'f'};
+my $log_level       = $opts->{'l'} || 0;
+my $no_fork         = $opts->{'n'}? 1: 0;
+my $pidfile         = $opts->{'p'};
+unless($config_filename) {
+  print STDERR "Usage: $0 [-d -n] -f config_file [-l log_level -p pidfile]\n";
+  exit(0);
+}
+
+# daemonize if asked to
+if($daemonize) {
+  open STDIN,   '/dev/null' || die "Can't read /dev/null: $!";
+  open STDOUT, '>/dev/null' || die "Cant write /dev/null: $!";
+  my $pid = fork();
+  exit if $pid;
+  die "couldn't fork: $!"
+    unless defined $pid;
+  POSIX::setsid() || die "couldn't start a new session: $!";
+  open STDERR, '>&STDOUT'   || die "Can't dup STDOUT: $!";
+}
+
+# write pidfile if asked to
+write_pidfile($pidfile);
+
+# grab useful config bits
+my $server_config = MCP->get_server_config($config_filename);
+my $processes    = $server_config->{'server'}->{'processes'};
+my $log_dir      = $server_config->{'server'}->{'log_dir'};
+my $syslog_ident = $server_config->{'server'}->{'syslog_ident'};
+
+# create listener sockets to pass to server processes in the fork
+foreach my $listener_config (@{$server_config->{'listeners'}}) {
+    $listener_config->{'listener'} = 
+        MCP::Poller::Connection::Client->create_listener($listener_config);
+}
+
+# start all the server processes, remember their pids and such
+my $proxy_servers = {};
+my $proxy_pids    = {};
+foreach my $process (@{$processes}) {
+  start_server_process($process);
+}
+$0 = 'mcpd (watcher)';
+
+# prepare signal handlers
+prepare_signal_handlers();
+
+# wait for kids to die and spawn replacements
+while(my $kid = waitpid(-1,0)) {
+  my $process = $proxy_pids->{$kid};
+  next unless defined $process;
+  delete $proxy_pids->{$kid};
+  start_server_process($process);
+}
+
+sub start_server_process {
+  my $process = shift;
+
+  # fork, start server, yadda yadda
+  my $cpid = $no_fork? 0: fork();
+  if($cpid) { # parent process
+    $proxy_pids->{$cpid} = $process;
+  }
+  else {      # child process
+    $proxy_servers->{$process} = MCP->get_proxy_server({
+      config_ref    => $server_config,
+      server_config => $config_filename,
+      log_file      => $log_dir.'/mcpd.'.$process.'.log',
+      log_level     => $log_level,
+      syslog_ident  => $syslog_ident,
+      process_name  => $process,
+    });
+    $proxy_servers->{$process}->run();
+    exit(0);
+  }
+}
+
+sub prepare_signal_handlers {
+  $SIG{'HUP'}  = sub { 
+    kill 1,  keys %{$proxy_pids}; };
+  $SIG{'INT'}  = sub { 
+    kill 2,  keys %{$proxy_pids}; remove_pidfile($pidfile); exit(0); };
+  $SIG{'KILL'} = sub { 
+    kill 9,  keys %{$proxy_pids}; remove_pidfile($pidfile); exit(0); };
+  $SIG{'TERM'} = sub { 
+    kill 15, keys %{$proxy_pids}; remove_pidfile($pidfile); exit(0); };
+}
+
+sub write_pidfile {
+  my $pidfile = shift;
+  return unless $pidfile;
+  if(-f $pidfile) {
+    die "pid file $pidfile already exists";
+  }
+  else {
+    open(PFH,">$pidfile") || die "could not open pidfile $pidfile: $!";
+    print PFH "$$\n";
+    close(PFH);
+  }
+}
+
+sub remove_pidfile {
+  my $pidfile = shift;
+  return unless $pidfile;
+  unlink $pidfile;
+}
+
+=head1 NAME
+
+mcpd - Memcache Proxy Daemon
+
+=head1 DESCRIPTION
+
+mcpd is the service daemon for MCP.  MCP (Memcache Proxy) is a distributed, 
+caching reverse proxy HTTP server.  It is similar to projects like Squid, 
+but dissimilar in that it caches pages in memory across a cluster of nodes, 
+rather than to disk.  Instead of running many child processes, MCP runs 
+asynchronously in a single process, reducing system overhead on busy servers.  
+In addition to proxying requests for origin servers and caching responses, it 
+also provides many other features, such as origin server pool management and 
+health monitoring, dynamic, rule-based routing of requests, configurable 
+redirects and URL rewriting, request and response header modification, 
+buffering of large requests or responses, distributed logging, and multiple 
+interfaces for tracking the status of proxy clusers and origin servers, as 
+well as timers for measuring request performace.  See below for a full 
+breakdown of MCP primary features.
+
+=head1 SYNOPSIS
+
+mcpd -d -f /path/to/site-config.pl -p /var/run/mcpd.pid
+
+=head1 OPTIONS
+
+=over 8
+
+=item -d 
+
+daemonize after start
+
+=item -f <filename> 
+
+configuration filename
+
+=item -l <debuglevel>
+
+logging debug level
+
+=item -n
+
+do not fork processes, run as single process
+
+=item -p <pidfile>
+
+pid filename
+
+=back
+
+=head1 CONFIGURATION
+
+The mcpd configuration file consists of a perl evaluable hash.  Config files 
+can include and override other configfiles by the use of #include directives 
+in the file.  For more details, see the distribution defaults/examples config
+file at /usr/local/etc/mcp-default-config.pl.
+
+=head1 INTERNALS
+
+=head2 Components
+
+=head2 Poller
+
+=head2 Connection Modules
+
+=head2 Request Object
+
+=head2 Request Modules
+
+=head1 REQUEST MODULES
+
+=head2 StatusPage
+
+=head2 Blocker
+
+=head2 Throttler
+
+=head2 Redirector
+
+The Redirector request module issues HTTP redirect responses and does transparent URL rewriting based on request URL, referrer URL, or request headers.
+
+Features:
+
+=over 8
+
+=item Status 301 Redirects
+
+A ruleset in MCP configuration allows regular expression matches on URLs to be used to dynamically generate HTTP redirects, preventing origin servers from having to perform this task.
+
+=item URL Rewriting
+
+In addition to redirects, MCP supports transparent URL rewriting, where the client requested URL can be modified by a regular expression rule to send a different request URL to the origin server.  The client is unaware that the resource is being fetched from an alternate location.
+
+=item Flexible Rulesets for Configuring Redirects and Rewrites
+
+Within the MCP configuration tree, many methods may be used to specify redirects.  Most simply, a regular expression match on the request URL can be used to match a redirect or rewrite rule.  Additionally, the referrer URL can be used to make this match.  The value of an HTTP cookie in the request header can also be used to dynamically rewrite or redirect a URL.
+
+=back
+
+=head2 HeaderStamper
+
+The HeaderStamper request module uses a ruleset to apply modifications to inbound request or outbound response headers. 
+
+Features:
+
+=over 8
+
+=item X-Forwarded-For Handling
+
+HeaderStamper updates the X-Forwarded-For header on inbound requests to provide origin servers with full request path information.
+
+=item Ruleset-Based Modification of Request and Response Headers
+
+MCP provides a module for modifying request or response headers on the basis of a URL regular expression match.  Other headers are automatically modified in compliance with good HTTP proxy behavior.
+
+=back
+
+=head2 DirectCache
+
+The DirectCache request module handles all access to the shared cache pool, including fetching pages, caching new responses from the origin servers, and executing purge requests.
+
+Features:
+
+=over 8
+
+=item Status 200 Response Caching
+
+MCP caches successful responses from the origin servers to a distributed memory pool.  Response headers and MCP configuration are used to determine the cacheability of the page as well as how long it is allowed to live in the cache.
+
+=item Status 404 Response Caching 
+
+Additionally, caching of 404 Not Found responses can be enabled for URLs matching a configured regular expression.  For services where unique URLs are never reused, this feautre reduces the amount of requests sent back to origin servers where the resource is known to not exist.
+
+=item LRU (Least Recently Used) Algorithm for Cache Maintenance
+
+Because MCP uses memcached, the amount of memory consumed by the cache is specified in advance and guaranteed not to overrun the limit.  Once the cache is full, the least recently accessed pages will be dropped first to make room for new pages.
+
+=item Purge Request Handling
+
+To facilitate easy maintenance of cached pages, MCP provides an HTTP interface for purging pages from the cache by URL.  Individual pages can be dropped or a list of pages can be passed and MCP will drop all of them in parallel. 
+
+=back
+
+=head2 Forwarder
+
+The Forwarder request module is responsible for performing HTTP requests on origin servers.
+
+Features:
+
+=over 8
+
+=item Origin Pools
+
+MCP allows for multiple pools of origin servers to be configured, where forwarded traffic is load-balanced across all healthy servers in each pool.
+
+=item Pool Confidence Tracking
+
+Each origin server pool member is monitored while handling requests.  Members which are not responding or operating improperly will have their confidence value reduced in the MCP server, diverting traffic to other, healthier nodes in the same pool.
+
+=item  Regular Expression Pool Selection
+
+MCP configuration contains a ruleset of URL-matching regular expressions to determine which origin server pool should handle forwarding for a given request.
+
+=item Pre-Buffering of Large Requests
+
+Some requests, such as file uploads, are large and can take a long time to receive with slower clients.  MCP pre-buffers larger requests before contacting origin servers to prevent unnecessarily tying-up resources on origin servers, which may have lower limits for maximum concurrent connections.
+
+=item Buffered Send of Large Responses 
+
+Some responses from origin servers are large in size, such as file downloads, large images, etc.  Often times, the client will receive the response slowly, thus busying an origin server connection just to wait for all the data to send.  MCP buffers a large window of the response data as it is coming back from the origin servers and disconnects from the origin server as soon as the entire payload is received, then handles sending the remainder of the response to the client.
+
+=back
+
+=head2 Logger
+
+The Logger request module gathers all pertinent request information at the end of a request and assembles it for logging.
+
+Features:
+
+=over 8
+
+=item Distributed Logging via UDP 
+
+MCP servers emit a stream of UDP log packets which can be received by any number of proxy loggers.  Each log packet contains request information, origin server status, timers, and response status.  
+
+=item Request Timing
+
+The Logger request module also does post-request calculation of time spent in various phases of the request and reports these timings in the log packets.
+
+=item Multicast Logging
+
+If the IP specified for the log destination is in the multicast range, the
+IO::Socket::Multicast module will be used to send udp log packets.  This can
+provide more efficient distribution of log data across multiple nodes or
+networks.
+
+=back
+
+The mcplog_squid.pl logger daemon writes logfiles in Squid-alike format as well as per-minute statistics files for use in performance profiling or service monitoring.
+
+
+=head2 Exceptions
+
+=head1 DEPENDENCIES
+
+  Linux kernel supporting epoll(7) facility
+  Perl 5.8.x or higher
+  memcached
+  IO::Epoll
+  Time::HiRes
+  Storable
+  IO::Socket::Multicast
+
+=head1 CHANGELOG
+
+=over 8
+
+=item 2.00
+
+=item 2.01
+
+  Integration of nonblocking memcached API 
+
+=item 2.02
+
+  Various performance optimizations
+
+=item 2.03
+
+  Optional caching of 404 responses
+  More consistent and well-documented default-config 
+
+=item 2.04
+
+  Massive optimizations to nonblocking memcached API
+  Optional logging via multicast
+
+=item 2.05
+
+  Optimized logging routines
+  Optimized event dispatch routines
+  Improvements to RequestModule API
+  Browser/Session cookie handling
+
+=back
+
+
+

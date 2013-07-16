@@ -1,0 +1,56 @@
+MCP Quick Start Guide.
+
+1. Install dependencies.
+   1.1. memcached (version 1.1 or higher)
+   1.2. Perl modules
+      1.2.1. IO::Epoll
+      1.2.2. Tie::Syslog
+
+2. Install MCP.
+   2.1. Install contents of lib/ directory into your perl library path.
+   2.2. Install contents of bin/ directory into any executable path.
+   2.3. Copy conf/default-config.pl to whichever directory you'd like to 
+        use for mcp config.
+   2.4. Copy and rename conf/mcp-config-dist.pl to whichever directory 
+        you'd like to use for mcp config, rename to mcp-config.pl.
+
+3. Start Your memecached Instances.  Remember which IPs and ports they're
+   running on.
+
+4. Configure MCP.  (Edit the mcp-config.pl file)
+
+   4.1. Basic server configuration:
+      4.1.1. At the top, set the path to your mcp-defalt-config.pl file.
+      4.1.2. In the 'server' block, set the user, group, error log 
+             destination directory.  You can also adjust how many worker
+             processes to run here (default 1 per core).
+      4.1.3. In the 'listeners' block, set the IP and port numbers for 
+             your administrative port and user request port to listen on.
+      4.1.4. In the 'requests' block, set the default_host value to the 
+             hostname that should be used when a request does not send any
+             Host: header.
+      4.1.5. In the 'cache_server' block, set the 'memcached_servers'
+             value to be a semicolon-delimited list of IP:port numbers of
+             all the memcached instances in your cluster.
+
+   4.2. Origin server configuration:
+      4.2.1. In the 'origin_pools' block (under 'forwarder'), create named 
+             arrayrefs for each origin server pool.  Each pool member 
+             should be a string containing IP:port number.
+      4.2.2. In the 'pool_match' block (under 'forwarder'), create pairings
+             of regular expressions and pool names.  When requests come in
+             and their URLs match a regular expression on the list, the 
+             named origin pool will be used to forward the request, if it
+             can't be served from cache.
+
+5. Test.
+   5.1. Attempt to start mcpd:
+
+        /path/to/mcpd -f /path/to/mcp-config.pl -p /path/to/pidfile
+
+        Daemon should start up, fork children, leave PID in /path/to/pidfile.
+
+   5.2. Send an HTTP request to the listen IP address and port number you
+        specified in the configuration file.
+        
+
