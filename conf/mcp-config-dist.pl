@@ -1,14 +1,12 @@
 
 # set this to the location of the default-config.pl that comes with mcp
-#include /path/to/mcp-default-config.pl
+#include /path/to/default-config.pl
 
 # basic server settings
 server => {
-  processes => [ 1 .. `cat /proc/cpuinfo | grep cores | wc -l` ],
+  processes => [ 1 .. 4 ],
   user      => 'mcp',
   group     => 'www',
-  log_dir   => '/var/log/',
-  log_level => 2,
 },
 
 # ips,ports to listen on for user service and for admin access

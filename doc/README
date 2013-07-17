@@ -15,7 +15,7 @@ MCP Quick Start Guide.
    2.2. Install contents of bin/ directory into any executable path.
    2.3. Copy conf/default-config.pl to whichever directory you'd like to 
         use for mcp config.
-   2.4. Copy and rename conf/mcp-config-dist.pl to whichever directory 
+   2.4. Copy and rename conf/config-dist.pl to whichever directory 
         you'd like to use for mcp config, rename to mcp-config.pl.
 
 3. Start Your memecached Instances.  Remember which IPs and ports they're
@@ -24,7 +24,7 @@ MCP Quick Start Guide.
 4. Configure MCP.  (Edit the mcp-config.pl file)
 
    4.1. Basic server configuration:
-      4.1.1. At the top, set the path to your mcp-defalt-config.pl file.
+      4.1.1. At the top, set the #include path to your defalt-config.pl file.
       4.1.2. In the 'server' block, set the user, group, error log 
              destination directory.  You can also adjust how many worker
              processes to run here (default 1 per core).
@@ -36,6 +36,9 @@ MCP Quick Start Guide.
       4.1.5. In the 'cache_server' block, set the 'memcached_servers'
              value to be a semicolon-delimited list of IP:port numbers of
              all the memcached instances in your cluster.
+      4.1.6. In the 'logger' block, set a log_host_ip and log_host_port,
+             or remove the 'Logger' RequestModule from the 
+             'request_module_sequence' block futher above for no logging. 
 
    4.2. Origin server configuration:
       4.2.1. In the 'origin_pools' block (under 'forwarder'), create named 
