@@ -1,5 +1,5 @@
 server => {
-  syslog_ident => 'mcpd',
+#  syslog_ident => 'mcpd',
 },
 
 poller => {
