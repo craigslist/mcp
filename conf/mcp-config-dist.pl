@@ -167,8 +167,8 @@ redirector => {
 
 # configuration for access log destination
 logger => {
-#  log_host_ip   => '10.55.1.1',
-#  log_host_port => 25678,
+  log_host_ip   => '127.0.0.1',
+  log_host_port => 25678,
 #  domain_sock   => '/var/run/mcp_log_sock',
 },
 
