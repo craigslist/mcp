@@ -53,7 +53,7 @@ MCP Quick Start Guide.
 5. Test.
    5.1. Attempt to start mcpd:
 
-        /path/to/mcpd -f /path/to/mcp-config.pl -p /path/to/pidfile
+        /path/to/mcpd -d -f /path/to/mcp-config.pl -p /path/to/pidfile
 
         Daemon should start up, fork children, leave PID in /path/to/pidfile.
 
